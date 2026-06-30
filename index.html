@@ -71,6 +71,10 @@
         return localStorage.getItem(`room_pwd_${roomId}`);
     }
 
+    function removeSavedPassword(roomId) {
+        localStorage.removeItem(`room_pwd_${roomId}`);
+    }
+
     // --- 2. QUẢN LÝ ĐỊNH TUYẾN (HISTORY API) ---
     const app = document.getElementById('app');
     let currentDecryptedLinks = null; 
@@ -86,12 +90,11 @@
     async function render() {
         const path = window.location.pathname;
         
-        // Router: Phân tích Pathname thay vì Hash
+        // Router: Phân tích Pathname cập nhật đường dẫn /go/
         if (path.startsWith('/room/')) {
             await renderRoomView(path.replace('/room/', ''));
-        } else if (path.length > 1 && path !== '/index.html') {
-            // Bắt mọi URL có dạng /xyz (ví dụ: /5f)
-            await renderRedirectView(path.substring(1));
+        } else if (path.startsWith('/go/')) {
+            await renderRedirectView(path.replace('/go/', ''));
         } else {
             await renderHomeView();
         }
@@ -169,6 +172,9 @@
             if (decrypted) {
                 currentDecryptedLinks = decrypted;
                 currentRoomPassword = savedPass;
+            } else {
+                // Nếu mật khẩu lưu bị sai (do người khác đổi pass phòng), xóa mật khẩu cũ
+                removeSavedPassword(roomId); 
             }
         }
 
@@ -211,7 +217,7 @@
                                 <tr class="border-b hover:bg-gray-50">
                                     <td class="p-3 font-semibold text-gray-700">${link.name}</td>
                                     <td class="p-3">
-                                        <a href="/${link.short}" target="_blank" class="text-blue-600 font-mono bg-blue-50 px-2 py-1 rounded hover:bg-blue-100">/${link.short}</a>
+                                        <a href="/go/${link.short}" target="_blank" class="text-blue-600 font-mono bg-blue-50 px-2 py-1 rounded hover:bg-blue-100">/go/${link.short}</a>
                                     </td>
                                     <td class="p-3 text-gray-500 text-sm truncate max-w-xs" title="${link.original}">${link.original}</td>
                                 </tr>
@@ -258,9 +264,12 @@
             if (decryptedLinks) {
                 const linkObj = decryptedLinks.find(l => l.short === shortCode);
                 if (linkObj) {
+                    app.innerHTML = `<div class="flex h-[80vh] items-center justify-center fade-in"><div class="loader"></div><span class="ml-3 text-gray-500">Đang chuyển hướng tự động...</span></div>`;
                     window.location.href = linkObj.original;
                     return; 
                 }
+            } else {
+                removeSavedPassword(roomId); // Xóa mật khẩu sai
             }
         }
 
@@ -348,7 +357,7 @@
         decryptedLinks.forEach(link => { delete db.usedShortLinks[link.short]; });
         db.rooms.splice(roomIndex, 1);
         
-        localStorage.removeItem(`room_pwd_${roomId}`); // Xóa mật khẩu đã lưu
+        removeSavedPassword(roomId); // Xóa mật khẩu đã lưu
         await saveDB(db);
         await render();
     }
