@@ -1,5 +1,27 @@
-<script>
-    const API_URL = 'https://YOUR-WORKER-NAME.YOUR-USERNAME.workers.dev/api/data'; 
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Note Link (Cloudflare Edition)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <style>
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        /* Hiệu ứng loading đơn giản */
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; display: inline-block; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 font-sans min-h-screen">
+
+    <div id="app" class="w-full max-w-5xl mx-auto p-4 fade-in">
+        <div class="flex justify-center items-center h-64"><div class="loader"></div><span class="ml-3 text-gray-500">Đang kết nối Server...</span></div>
+    </div>
+
+   <script>
+    const API_URL = 'https://sharelinks.dangvanhieu25022.workers.dev'; 
 
     // --- 1. GIAO TIẾP DỮ LIỆU & BẢO MẬT ---
     async function getDB() {
@@ -367,3 +389,5 @@
     // Khởi chạy
     render();
 </script>
+</body>
+</html>
