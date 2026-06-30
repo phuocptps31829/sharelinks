@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Note Link (Cloudflare Edition)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <style>
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        /* Hiệu ứng loading đơn giản */
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; display: inline-block; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 font-sans min-h-screen">
+
+    <div id="app" class="w-full max-w-5xl mx-auto p-4 fade-in">
+        <div class="flex justify-center items-center h-64"><div class="loader"></div><span class="ml-3 text-gray-500">Đang kết nối Server...</span></div>
+    </div>
+
+    <script>
+        // ==========================================
+        // THAY LINK WORKER CỦA BẠN VÀO ĐÂY
+        // ==========================================
+        const API_URL = 'https://conectdbjson.dangvanhieu25022.workers.dev/api/data'; 
+
+        // --- 1. GIAO TIẾP VỚI CLOUDFLARE WORKER ---
+        async function getDB() {
+            try {
+                const response = await fetch(API_URL);
+                if (!response.ok) throw new Error('Network response was not ok');
+                return await response.json();
+            } catch (error) {
+                console.error("Lỗi lấy dữ liệu:", error);
+                return { rooms: [], usedShortLinks: {} };
+            }
+        }
+
+        async function saveDB(data) {
+            try {
+                await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+            } catch (error) {
+                alert("Lỗi khi lưu dữ liệu lên server!");
+                console.error(error);
+            }
+        }
+
+        function encryptData(dataObj, password) {
+            return CryptoJS.AES.encrypt(JSON.stringify(dataObj), password).toString();
+        }
+
+        function decryptData(encryptedString, password) {
+            try {
+                const bytes = CryptoJS.AES.decrypt(encryptedString, password);
+                const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+                return decrypted ? JSON.parse(decrypted) : null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // --- 2. QUẢN LÝ GIAO DIỆN & ĐỊNH TUYẾN ---
+        const app = document.getElementById('app');
+        let currentDecryptedLinks = null; 
+        let currentRoomPassword = null;
+
+        async function render() {
+            const hash = window.location.hash;
+            if (hash.startsWith('#/go/')) {
+                await renderRedirectView(hash.replace('#/go/', ''));
+            } else if (hash.startsWith('#/room/')) {
+                await renderRoomView(hash.replace('#/room/', ''));
+            } else {
+                await renderHomeView();
+            }
+        }
+
+        window.addEventListener('hashchange', render);
+
+        // --- 3. TRANG CHỦ (HOME VIEW) ---
+        async function renderHomeView() {
+            const db = await getDB();
+            const sortedRooms = db.rooms.sort((a, b) => b.createdAt - a.createdAt);
+
+            app.innerHTML = `
+                <div class="bg-white p-8 rounded-xl shadow-lg fade-in">
+                    <div class="flex justify-between items-center mb-6">
+                        <h1 class="text-2xl font-bold text-gray-800">Trang chủ - Quản lý Phòng Share Link</h1>
+                        <button onclick="toggleModal('createRoomModal')" class="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 transition">+ Tạo phòng mới</button>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <input type="text" id="searchInput" onkeyup="filterRooms()" placeholder="Tìm kiếm theo tên, ID, năm-tháng-ngày..." class="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse" id="roomTable">
+                            <thead>
+                                <tr class="bg-gray-100 text-gray-600 border-b">
+                                    <th class="p-3">ID Phòng</th>
+                                    <th class="p-3">Tên Phòng</th>
+                                    <th class="p-3">Ngày tạo</th>
+                                    <th class="p-3">Hành động</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${sortedRooms.map(room => `
+                                    <tr class="border-b hover:bg-gray-50 room-row" data-search="${room.name.toLowerCase()} ${room.id.toLowerCase()} ${new Date(room.createdAt).toLocaleDateString()}">
+                                        <td class="p-3 font-mono text-sm text-gray-500">${room.id}</td>
+                                        <td class="p-3 font-semibold text-gray-700">${room.name}</td>
+                                        <td class="p-3 text-sm">${new Date(room.createdAt).toLocaleString('vi-VN')}</td>
+                                        <td class="p-3">
+                                            <a href="#/room/${room.id}" class="text-blue-500 hover:underline mr-3">Vào phòng</a>
+                                            <button onclick="deleteRoom('${room.id}')" class="text-red-500 hover:underline">Xóa</button>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                                ${sortedRooms.length === 0 ? '<tr><td colspan="4" class="p-6 text-center text-gray-500">Chưa có phòng nào.</td></tr>' : ''}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div id="createRoomModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center">
+                    <div class="bg-white p-6 rounded-lg w-96 shadow-2xl">
+                        <h2 class="text-xl font-bold mb-4">Tạo Phòng Mới</h2>
+                        <input type="text" id="newRoomName" placeholder="Tên phòng" class="w-full mb-3 p-2 border rounded">
+                        <input type="password" id="newRoomPassword" placeholder="Mật mã vào phòng" class="w-full mb-4 p-2 border rounded">
+                        <div class="flex justify-end gap-2">
+                            <button onclick="toggleModal('createRoomModal')" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Hủy</button>
+                            <button onclick="createRoom()" id="btnCreateRoom" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Tạo (Đồng bộ mây)</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- 4. TRONG PHÒNG (ROOM VIEW) ---
+        async function renderRoomView(roomId) {
+            const db = await getDB();
+            const room = db.rooms.find(r => r.id === roomId);
+            
+            if (!room) { window.location.hash = ''; return; }
+
+            if (!currentDecryptedLinks) {
+                app.innerHTML = `
+                    <div class="flex h-[80vh] items-center justify-center fade-in">
+                        <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-md text-center">
+                            <h2 class="text-2xl font-bold mb-2">Vào Phòng: ${room.name}</h2>
+                            <p class="text-gray-500 mb-6 text-sm">Vui lòng nhập mật mã phòng để giải mã dữ liệu</p>
+                            <input type="password" id="roomLoginPass" placeholder="Nhập mật mã..." class="w-full p-3 border-2 border-gray-200 rounded-lg mb-4 text-center text-lg focus:border-blue-500 outline-none">
+                            <button onclick="unlockRoom('${roomId}', '${room.encryptedData}')" class="w-full bg-gray-800 text-white p-3 rounded-lg hover:bg-gray-900 font-semibold transition">Mở khóa</button>
+                            <a href="#" class="block mt-4 text-blue-500 text-sm hover:underline">Quay lại trang chủ</a>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            app.innerHTML = `
+                <div class="bg-white p-8 rounded-xl shadow-lg fade-in">
+                    <div class="flex justify-between items-center mb-6 border-b pb-4">
+                        <div>
+                            <a href="#" onclick="exitRoom()" class="text-blue-500 text-sm hover:underline mb-1 inline-block">← Quay lại trang chủ</a>
+                            <h1 class="text-2xl font-bold text-gray-800">Phòng: ${room.name} <span class="text-sm font-normal text-gray-400 font-mono ml-2">ID: ${room.id}</span></h1>
+                        </div>
+                        <button onclick="toggleModal('createLinkModal')" class="bg-green-600 text-white px-4 py-2 rounded shadow hover:bg-green-700 transition">+ Thêm Note Link</button>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-gray-100 text-gray-600 border-b">
+                                    <th class="p-3">Tên Link</th>
+                                    <th class="p-3">Link Rút Gọn</th>
+                                    <th class="p-3">Link Thực Tế</th>
+                                    <th class="p-3">Ngày tạo</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${currentDecryptedLinks.map(link => `
+                                    <tr class="border-b hover:bg-gray-50">
+                                        <td class="p-3 font-semibold text-gray-700">${link.name}</td>
+                                        <td class="p-3">
+                                            <a href="#/go/${link.short}" target="_blank" class="text-blue-600 font-mono bg-blue-50 px-2 py-1 rounded hover:bg-blue-100 transition">/${link.short}</a>
+                                        </td>
+                                        <td class="p-3 text-gray-500 text-sm truncate max-w-xs" title="${link.original}">${link.original}</td>
+                                        <td class="p-3 text-sm">${new Date(link.createdAt).toLocaleString('vi-VN')}</td>
+                                    </tr>
+                                `).join('')}
+                                ${currentDecryptedLinks.length === 0 ? '<tr><td colspan="4" class="p-6 text-center text-gray-500">Phòng trống. Hãy tạo một link mới!</td></tr>' : ''}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div id="createLinkModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center">
+                    <div class="bg-white p-6 rounded-lg w-[500px] shadow-2xl">
+                        <h2 class="text-xl font-bold mb-4">Tạo Note Link Mới</h2>
+                        <input type="text" id="newLinkName" placeholder="Tên (VD: Thư mục render)" class="w-full mb-3 p-2 border rounded">
+                        <input type="url" id="newOriginalLink" placeholder="Đường dẫn thực tế (https://...)" class="w-full mb-3 p-2 border rounded">
+                        <div class="flex mb-4 gap-2">
+                            <input type="text" id="newShortLink" placeholder="Chuỗi rút gọn" class="w-full p-2 border rounded font-mono">
+                            <button onclick="generateShort()" class="bg-gray-200 px-3 rounded hover:bg-gray-300 text-sm font-semibold whitespace-nowrap">Tự tạo</button>
+                        </div>
+                        <div class="flex justify-end gap-2">
+                            <button onclick="toggleModal('createLinkModal')" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Hủy</button>
+                            <button onclick="createLink('${roomId}')" id="btnCreateLink" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">Lưu</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- 5. GIAO DIỆN DÙNG LINK (REDIRECT VIEW) ---
+        async function renderRedirectView(shortCode) {
+            const db = await getDB();
+            const roomId = db.usedShortLinks[shortCode];
+            
+            if (!roomId) {
+                app.innerHTML = `<div class="text-center mt-20 text-red-500 text-2xl font-bold fade-in">404 - Không tìm thấy Link này!</div>`;
+                return;
+            }
+
+            const room = db.rooms.find(r => r.id === roomId);
+
+            app.innerHTML = `
+                <div class="flex h-[80vh] items-center justify-center">
+                    <div class="w-full max-w-lg text-center fade-in">
+                        <div class="mb-8">
+                            <svg class="w-16 h-16 mx-auto text-blue-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8V7z"></path></svg>
+                            <h1 class="text-3xl font-extrabold text-gray-800 tracking-tight">Vùng Chứa Bảo Mật</h1>
+                            <p class="text-gray-500 mt-2">Nhập mật mã để tự động chuyển hướng đến link gốc.</p>
+                        </div>
+                        <input type="password" id="redirectPassword" placeholder="Mật mã giải mã..." class="w-full p-4 border-4 border-gray-200 rounded-2xl text-center text-2xl font-bold tracking-widest text-gray-700 focus:border-blue-500 outline-none transition shadow-inner">
+                    </div>
+                </div>
+            `;
+
+            const input = document.getElementById('redirectPassword');
+            
+            input.addEventListener('input', (e) => {
+                const pass = e.target.value;
+                if(pass.length === 0) return;
+                
+                const decryptedLinks = decryptData(room.encryptedData, pass);
+                if (decryptedLinks) {
+                    const linkObj = decryptedLinks.find(l => l.short === shortCode);
+                    if (linkObj) {
+                        input.classList.remove('border-gray-200', 'focus:border-blue-500');
+                        input.classList.add('border-green-500', 'bg-green-50');
+                        input.disabled = true;
+                        
+                        setTimeout(() => { window.location.href = linkObj.original; }, 400);
+                    }
+                }
+            });
+        }
+
+        // --- CÁC HÀM XỬ LÝ LOGIC (BẤT ĐỒNG BỘ) ---
+
+        function toggleModal(id) { document.getElementById(id).classList.toggle('hidden'); }
+
+        async function createRoom() {
+            const name = document.getElementById('newRoomName').value.trim();
+            const pass = document.getElementById('newRoomPassword').value;
+            if (!name || !pass) return alert("Vui lòng nhập đầy đủ tên và mật mã!");
+
+            document.getElementById('btnCreateRoom').innerText = 'Đang lưu...';
+            const db = await getDB();
+            const newRoom = {
+                id: 'R' + Date.now().toString(36).toUpperCase(),
+                name: name,
+                createdAt: Date.now(),
+                encryptedData: encryptData([], pass)
+            };
+
+            db.rooms.push(newRoom);
+            await saveDB(db);
+            toggleModal('createRoomModal');
+            await render();
+        }
+
+        function unlockRoom(roomId, encryptedData) {
+            const pass = document.getElementById('roomLoginPass').value;
+            const decrypted = decryptData(encryptedData, pass);
+            
+            if (decrypted) {
+                currentDecryptedLinks = decrypted;
+                currentRoomPassword = pass;
+                renderRoomView(roomId);
+            } else {
+                alert("Mật mã không chính xác!");
+            }
+        }
+
+        function exitRoom() {
+            currentDecryptedLinks = null;
+            currentRoomPassword = null;
+            window.location.hash = '';
+        }
+
+        async function deleteRoom(roomId) {
+            const pass = prompt("Hành động này sẽ xóa phòng và TOÀN BỘ link bên trong. Nhập mật khẩu để xác nhận:");
+            if (!pass) return;
+
+            const db = await getDB();
+            const roomIndex = db.rooms.findIndex(r => r.id === roomId);
+            if (roomIndex === -1) return;
+
+            const decryptedLinks = decryptData(db.rooms[roomIndex].encryptedData, pass);
+            if (!decryptedLinks) return alert("Mật khẩu không chính xác! Không thể xóa.");
+
+            decryptedLinks.forEach(link => { delete db.usedShortLinks[link.short]; });
+            db.rooms.splice(roomIndex, 1);
+            
+            await saveDB(db);
+            await render();
+        }
+
+        function generateShort() {
+            document.getElementById('newShortLink').value = Math.random().toString(36).substring(2, 8);
+        }
+
+        async function createLink(roomId) {
+            const name = document.getElementById('newLinkName').value.trim();
+            const original = document.getElementById('newOriginalLink').value.trim();
+            const shortCode = document.getElementById('newShortLink').value.trim();
+
+            if (!name || !original || !shortCode) return alert("Vui lòng điền đủ thông tin!");
+
+            document.getElementById('btnCreateLink').innerText = 'Đang lưu...';
+            const db = await getDB();
+
+            if (db.usedShortLinks[shortCode]) return alert(`Chuỗi "${shortCode}" đã tồn tại!`);
+
+            const newLink = { id: 'L' + Date.now().toString(36), name, original, short: shortCode, createdAt: Date.now() };
+            currentDecryptedLinks.push(newLink);
+
+            db.usedShortLinks[shortCode] = roomId;
+            const roomIndex = db.rooms.findIndex(r => r.id === roomId);
+            db.rooms[roomIndex].encryptedData = encryptData(currentDecryptedLinks, currentRoomPassword);
+            
+            await saveDB(db);
+            toggleModal('createLinkModal');
+            await renderRoomView(roomId);
+        }
+
+        function filterRooms() {
+            const keyword = document.getElementById('searchInput').value.toLowerCase();
+            const rows = document.querySelectorAll('.room-row');
+            rows.forEach(row => {
+                row.style.display = row.getAttribute('data-search').includes(keyword) ? '' : 'none';
+            });
+        }
+
+        // Khởi chạy
+        render();
+    </script>
+</body>
+</html>
